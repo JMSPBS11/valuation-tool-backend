@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+python-multipart
+google-cloud-vision
+python-dotenv
+PyMuPDF==1.22.5
