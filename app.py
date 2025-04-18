@@ -10,25 +10,21 @@ def extract_new_vehicle_data_nissan(pdf_path):
 
     try:
         doc = fitz.open(pdf_path)
-        page = doc.load_page(3)  # Page 4 (index 3)
+        page = doc.load_page(3)  # Page 4
 
-        # 🔍 Crop to top portion of the page around Line 55
-        crop_rect = fitz.Rect(0, 260, 800, 310)  # top, left, right, bottom
-        page.set_cropbox(crop_rect)
-
-        label_pattern = re.compile(r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE\s+VEH.*", re.IGNORECASE)
+        label_keywords = ["TOTAL", "NISSAN", "RETAIL", "LEASE"]
         blocks = page.get_text("dict")["blocks"]
 
         for block in blocks:
             for line in block.get("lines", []):
-                text_line = " ".join(span["text"] for span in line["spans"])
-                if label_pattern.search(text_line):
-                    numbers = [span["text"] for span in line["spans"] if re.fullmatch(r"[\d,]+", span["text"])]
-                    if len(numbers) >= 3:
+                line_text = " ".join(span["text"] for span in line["spans"])
+                if all(word in line_text.upper() for word in label_keywords):
+                    numeric_spans = [span["text"] for span in line["spans"] if re.fullmatch(r"[\d,]+", span["text"])]
+                    if len(numeric_spans) >= 3:
                         try:
-                            result["H29"] = int(numbers[0].replace(",", ""))
-                            result["H30"] = int(numbers[1].replace(",", ""))
-                            result["H31"] = int(numbers[2].replace(",", ""))
+                            result["H29"] = int(numeric_spans[0].replace(",", ""))
+                            result["H30"] = int(numeric_spans[1].replace(",", ""))
+                            result["H31"] = int(numeric_spans[2].replace(",", ""))
                             return result
                         except ValueError:
                             return result
@@ -51,11 +47,10 @@ def upload_file():
     file_path = os.path.join(upload_folder, file.filename)
     file.save(file_path)
 
-    # Run the new extraction logic
+    # Run the Nissan extraction
     extracted_data = extract_new_vehicle_data_nissan(file_path)
 
     return jsonify(extracted_data)
 
 if __name__ == '__main__':
     app.run(debug=True)
-
