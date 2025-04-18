@@ -1,51 +1,57 @@
+from flask import Flask, request, jsonify
 import os
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "service_account.json"
-
-from fastapi import FastAPI, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from google.cloud import vision
 import fitz  # PyMuPDF
-import io
+import re
 
-app = FastAPI()
+app = Flask(__name__)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://valuation-tool-frontend.vercel.app"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def extract_new_vehicle_data_nissan(pdf_path):
+    result = {"H29": None, "H30": None, "H31": None}
 
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    contents = await file.read()
+    try:
+        doc = fitz.open(pdf_path)
+        page = doc.load_page(3)  # Page 4 = index 3
 
-    # Save the uploaded PDF temporarily
-    with open("temp_upload.pdf", "wb") as f:
-        f.write(contents)
+        label_pattern = re.compile(r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE\s+VEH.*", re.IGNORECASE)
+        blocks = page.get_text("dict")["blocks"]
 
-    # Crop Page 4 bottom-right (Nissan Line 63)
-    doc = fitz.open("temp_upload.pdf")
-    page = doc.load_page(3)  # Page 4
-    rect = fitz.Rect(420, 500, 595, 792)  # Bottom-right crop
-    pix = page.get_pixmap(clip=rect, dpi=300)
-    img_bytes = pix.tobytes("png")
+        for block in blocks:
+            for line in block.get("lines", []):
+                text_line = " ".join(span["text"] for span in line["spans"])
+                if label_pattern.search(text_line):
+                    # Extract numeric values in the same line
+                    numbers = [span["text"] for span in line["spans"] if re.fullmatch(r"[\d,]+", span["text"])]
+                    if len(numbers) >= 3:
+                        try:
+                            result["H29"] = int(numbers[0].replace(",", ""))
+                            result["H30"] = int(numbers[1].replace(",", ""))
+                            result["H31"] = int(numbers[2].replace(",", ""))
+                            return result
+                        except ValueError:
+                            return result
+        return result
+    except Exception as e:
+        print(f"Error extracting new vehicle data for Nissan: {e}")
+        return result
 
-    # Run Google OCR
-    client = vision.ImageAnnotatorClient()
-    image = vision.Image(content=img_bytes)
-    response = client.document_text_detection(image=image)
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
 
-    extracted_text = response.full_text_annotation.text
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
 
-    return {
-        "status": "success",
-        "data": {
-            "H29": 123,
-            "H30": 456,
-            "H31": 789,
-            "raw": extracted_text
-        }
-    }
+    upload_folder = 'uploads'
+    os.makedirs(upload_folder, exist_ok=True)
+    file_path = os.path.join(upload_folder, file.filename)
+    file.save(file_path)
 
+    # Extract H29–H31 from Nissan PDF
+    extracted_data = extract_new_vehicle_data_nissan(file_path)
+
+    return jsonify(extracted_data)
+
+if __name__ == '__main__':
+    app.run(debug=True)
