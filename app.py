@@ -10,17 +10,17 @@ def extract_new_vehicle_data_nissan(pdf_path):
 
     try:
         doc = fitz.open(pdf_path)
-        page = doc.load_page(3)  # Page 4 = index 3
+        page = doc.load_page(3)  # Page 4 (index 3)
 
-        label_pattern = re.compile(r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE\s+VEH", re.IGNORECASE)
+        # 🔍 Crop to top portion of the page around Line 55
+        crop_rect = fitz.Rect(0, 260, 800, 310)  # top, left, right, bottom
+        page.set_cropbox(crop_rect)
+
+        label_pattern = re.compile(r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE\s+VEH.*", re.IGNORECASE)
         blocks = page.get_text("dict")["blocks"]
 
         for block in blocks:
             for line in block.get("lines", []):
-                # Skip footer and CDKGlobal text by bounding box limit
-                if any(span["bbox"][1] > 500 for span in line["spans"]):
-                    continue
-
                 text_line = " ".join(span["text"] for span in line["spans"])
                 if label_pattern.search(text_line):
                     numbers = [span["text"] for span in line["spans"] if re.fullmatch(r"[\d,]+", span["text"])]
