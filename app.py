@@ -12,28 +12,29 @@ def extract_new_vehicle_data_nissan(pdf_path):
         doc = fitz.open(pdf_path)
         page = doc.load_page(3)  # Page 4 = index 3
 
-        # Search for the label line
-        label_pattern = re.compile(r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE\s+VEH.*", re.IGNORECASE)
+        label_pattern = re.compile(r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE\s+VEH", re.IGNORECASE)
         blocks = page.get_text("dict")["blocks"]
 
         for block in blocks:
             for line in block.get("lines", []):
-                spans = line.get("spans", [])
-                full_line = " ".join([s["text"] for s in spans])
+                # Skip footer and CDKGlobal text by bounding box limit
+                if any(span["bbox"][1] > 500 for span in line["spans"]):
+                    continue
 
-                if label_pattern.search(full_line):
-                    # Extract numeric values to the right of the label
-                    numeric_spans = [s["text"] for s in spans if re.fullmatch(r"\d{1,3}(,\d{3})*", s["text"])]
-                    if len(numeric_spans) >= 3:
-                        result["H29"] = int(numeric_spans[0].replace(",", ""))
-                        result["H30"] = int(numeric_spans[1].replace(",", ""))
-                        result["H31"] = int(numeric_spans[2].replace(",", ""))
-                        return result
-
+                text_line = " ".join(span["text"] for span in line["spans"])
+                if label_pattern.search(text_line):
+                    numbers = [span["text"] for span in line["spans"] if re.fullmatch(r"[\d,]+", span["text"])]
+                    if len(numbers) >= 3:
+                        try:
+                            result["H29"] = int(numbers[0].replace(",", ""))
+                            result["H30"] = int(numbers[1].replace(",", ""))
+                            result["H31"] = int(numbers[2].replace(",", ""))
+                            return result
+                        except ValueError:
+                            return result
         return result
-
     except Exception as e:
-        print(f"[Nissan H29–H31 Extraction Error]: {e}")
+        print(f"Error extracting new vehicle data for Nissan: {e}")
         return result
 
 @app.route('/upload', methods=['POST'])
