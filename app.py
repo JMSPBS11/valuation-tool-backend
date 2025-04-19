@@ -1,20 +1,25 @@
-import os
 from flask import Flask, request, jsonify
-from google.cloud import vision
-import fitz  # PyMuPDF
+import os
 import io
+import fitz  # PyMuPDF
+from google.cloud import vision
 import re
 
 app = Flask(__name__)
-
-# Initialize Google Vision client using environment variable
 vision_client = vision.ImageAnnotatorClient()
 
-def extract_nissan_new_vehicle_data_google(pdf_path):
-    result = {"H29": None, "H30": None, "H31": None, "raw": []}
+def extract_nissan_debug_google(pdf_path):
+    result = {
+        "H29": None,
+        "H30": None,
+        "H31": None,
+        "matched_line": None,
+        "all_lines": []
+    }
+
     try:
         doc = fitz.open(pdf_path)
-        page = doc.load_page(3)  # Page 4 (index 3)
+        page = doc.load_page(3)  # Page 4
 
         pix = page.get_pixmap(dpi=300)
         img_bytes = pix.tobytes("png")
@@ -24,25 +29,28 @@ def extract_nissan_new_vehicle_data_google(pdf_path):
         if response.error.message:
             raise Exception(response.error.message)
 
-        text = response.full_text_annotation.text
-        result["raw"] = re.findall(r"\d{1,3}(?:,\d{3})+", text)
+        # Collect all lines and look for matches
+        pattern = re.compile(r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE\s+VEH", re.IGNORECASE)
 
-        pattern = re.compile(r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE\s+VEHS.*", re.IGNORECASE)
-        for block in response.full_text_annotation.pages[0].blocks:
-            for para in block.paragraphs:
-                line_text = " ".join([
-                    word.symbols[0].text for word in para.words if word.symbols
-                ])
-                if pattern.search(line_text):
-                    numbers = re.findall(r"\d{1,3}(?:,\d{3})+", line_text)
-                    if len(numbers) >= 3:
-                        result["H29"] = int(numbers[0].replace(",", ""))
-                        result["H30"] = int(numbers[1].replace(",", ""))
-                        result["H31"] = int(numbers[2].replace(",", ""))
-                    return result
+        lines = []
+        for page in response.full_text_annotation.pages:
+            for block in page.blocks:
+                for para in block.paragraphs:
+                    line_text = " ".join([symbol.text for word in para.words for symbol in word.symbols])
+                    lines.append(line_text)
+                    if pattern.search(line_text):
+                        result["matched_line"] = line_text
+                        numbers = re.findall(r"\d{1,3}(?:,\d{3})+", line_text)
+                        if len(numbers) >= 3:
+                            result["H29"] = int(numbers[0].replace(",", ""))
+                            result["H30"] = int(numbers[1].replace(",", ""))
+                            result["H31"] = int(numbers[2].replace(",", ""))
+
+        result["all_lines"] = lines
         return result
+
     except Exception as e:
-        print(f"Extraction error: {e}")
+        print(f"Debug OCR extraction error: {e}")
         return result
 
 @app.route('/upload', methods=['POST'])
@@ -59,7 +67,7 @@ def upload_file():
     file_path = os.path.join(upload_folder, file.filename)
     file.save(file_path)
 
-    data = extract_nissan_new_vehicle_data_google(file_path)
+    data = extract_nissan_debug_google(file_path)
     return jsonify(data)
 
 if __name__ == '__main__':
