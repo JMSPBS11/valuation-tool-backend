@@ -1,16 +1,16 @@
-import os
-import re
-import io
 from flask import Flask, request, jsonify
+import os
+import fitz  # PyMuPDF
+import re
 from google.cloud import vision
+import io
 
 app = Flask(__name__)
 
-def extract_nissan_h29_h31_google(pdf_path):
-    result = {"H29": None, "H30": None, "H31": None}
-
+def extract_nissan_new_vehicle_data_google(pdf_path):
     try:
         client = vision.ImageAnnotatorClient()
+
         with io.open(pdf_path, 'rb') as f:
             content = f.read()
 
@@ -18,33 +18,32 @@ def extract_nissan_h29_h31_google(pdf_path):
         response = client.document_text_detection(image=image)
 
         if response.error.message:
-            print("OCR error:", response.error.message)
-            return result
+            print("Google OCR error:", response.error.message)
+            return {"H29": None, "H30": None, "H31": None}
 
-        text = response.full_text_annotation.text
-        pattern = re.compile(r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE", re.IGNORECASE)
+        full_text = response.full_text_annotation.text
 
-        lines = text.split("\n")
-        for line in lines:
-            if pattern.search(line):
-                # Look ahead to the next line as values may be broken across lines
-                idx = lines.index(line)
-                combined_line = line
-                if idx + 1 < len(lines):
-                    combined_line += " " + lines[idx + 1]
+        # Print full text for debug purposes
+        print("-------- OCR DEBUG START (Page 4) --------")
+        print(full_text)
+        print("-------- OCR DEBUG END --------")
 
-                numbers = re.findall(r"\d{1,3}(?:,\d{3})*", combined_line)
-                if len(numbers) >= 3:
-                    result["H29"] = int(numbers[0].replace(",", ""))
-                    result["H30"] = int(numbers[1].replace(",", ""))
-                    result["H31"] = int(numbers[2].replace(",", ""))
-                    break
+        result = {"H29": None, "H30": None, "H31": None}
+
+        # Locate the correct line and extract numbers
+        pattern = r"TOTAL\s+NISSAN\s+RETAIL\s+&\s+LEASE\s+VEH.*?([\d,]+)\s+([\d,]+)\s+([\d,]+)"
+        match = re.search(pattern, full_text, re.IGNORECASE)
+
+        if match:
+            result["H29"] = int(match.group(1).replace(",", ""))
+            result["H30"] = int(match.group(2).replace(",", ""))
+            result["H31"] = int(match.group(3).replace(",", ""))
 
         return result
 
     except Exception as e:
-        print(f"Error in extraction: {e}")
-        return result
+        print(f"OCR processing failed: {e}")
+        return {"H29": None, "H30": None, "H31": None}
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -60,8 +59,8 @@ def upload_file():
     file_path = os.path.join(upload_folder, file.filename)
     file.save(file_path)
 
-    data = extract_nissan_h29_h31_google(file_path)
-    return jsonify(data)
+    extracted_data = extract_nissan_new_vehicle_data_google(file_path)
+    return jsonify(extracted_data)
 
 if __name__ == '__main__':
-    app.run()
+    app.run(debug=True)
